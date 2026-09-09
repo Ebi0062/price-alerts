@@ -1,0 +1,51 @@
+name: price-alerts
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+    - cron: "17 3 1,11,21 * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: github.event.schedule == '*/5 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --quiet requests pyyaml
+      - name: remember alert state between runs
+        uses: actions/cache@v4
+        with:
+          path: out
+          key: state-${{ github.run_id }}
+          restore-keys: |
+            state-
+      - name: check prices and send alerts
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          python alarm.py --once --quiet
+          echo "--- last alerts ---"
+          tail -n 20 out/alerts.log 2>/dev/null || echo "(no alert yet)"
+
+  keepalive:
+    if: github.event.schedule == '17 3 1,11,21 * *'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: keep repo active
+        run: |
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .keepalive
+          git config user.name "price-alert-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .keepalive
+          git diff --cached --quiet || (git commit -m "chore: keepalive" && git push)
